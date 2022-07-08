@@ -14,6 +14,8 @@
 #
 ###################################
 
+set -eu
+
 function deleteDirChmod777() {
 	local -r dir=$1
 	# e.g files in .git will be write-protected and we don't want sudo for this command
@@ -31,4 +33,19 @@ function noAscInDir() {
 	local -r dir=$1
 	shift 1
 	(($(findAscInDir "$dir" | wc -l) == 0))
+}
+
+function checkWorkingDirectoryExists() {
+	local workingDirectory=$1
+
+	local scriptDir
+	scriptDir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" &>/dev/null && pwd 2>/dev/null)"
+	local -r scriptDir
+	source "$scriptDir/shared-patterns.source.sh"
+
+	if ! [ -d "$workingDirectory" ]; then
+		printf >&2 "\033[1;31mERROR\033[0m: working directory \033[0;36m%s\033[0m does not exist\n" "$workingDirectory"
+		echo >&2 "Check for typos and/or use $WORKING_DIR_PATTERN to specify another"
+		exit 9
+	fi
 }

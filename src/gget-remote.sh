@@ -42,7 +42,6 @@ function gget-remote() {
 	source "$scriptDir/utils.sh"
 	source "$scriptDir/../lib/tegonal-scripts/src/utility/parse-args.sh" || exit 200
 
-
 	function add() {
 
 		local remote url pullDirectory workingDirectory unsecure
@@ -82,7 +81,7 @@ function gget-remote() {
 
 		mkdir -p "$workingDirectory/remotes"
 
-		declare remoteDirectory publicKeys repo gpgDir
+		local remoteDirectory publicKeys repo gpgDir
 		source "$scriptDir/directories.source.sh"
 
 		if [ -f "$remoteDirectory" ]; then
@@ -153,7 +152,7 @@ function gget-remote() {
 		exec 4<"$tmpFile"
 		rm "$tmpFile"
 
-		findAsc "$repo/.gget"  -print0 >&3
+		findAsc "$repo/.gget" -print0 >&3
 
 		echo ""
 		while read -u 4 -r -d $'\0' file; do
@@ -204,13 +203,9 @@ function gget-remote() {
 		if ! [ -v workingDirectory ]; then workingDirectory="$DEFAULT_WORKING_DIR"; fi
 		checkAllArgumentsSet params "$examples"
 
-		if ! [ -d "$workingDirectory" ]; then
-			printf >&2 "\033[1;31mERROR\033[0m: working directory %s does not exist\n" "$workingDirectory"
-			echo >&2 "Check for typos and/or use $WORKING_DIR_PATTERN to specify another"
-			exit 9
-		fi
+		checkWorkingDirectoryExists "$workingDirectory"
 
-		declare remotesDirectory
+		local remotesDirectory
 		source "$scriptDir/directories.source.sh"
 
 		cd "$remotesDirectory"
@@ -247,7 +242,9 @@ function gget-remote() {
 		if ! [ -v workingDirectory ]; then workingDirectory="$DEFAULT_WORKING_DIR"; fi
 		checkAllArgumentsSet params "$examples"
 
-		declare remoteDirectory
+		checkWorkingDirectoryExists "$workingDirectory"
+
+		local remoteDirectory
 		source "$scriptDir/directories.source.sh"
 
 		if [ -f "$remoteDirectory" ]; then

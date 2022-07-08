@@ -37,13 +37,14 @@ function gget-pull() {
 
 	source "$scriptDir/shared-patterns.source.sh"
 	source "$scriptDir/gpg-utils.sh"
+	source "$scriptDir/pulled-utils.sh"
 	source "$scriptDir/utils.sh"
 
 	local -r UNSECURE_NO_VERIFY_PATTERN='--unsecure-no-verification'
 
 	local remote tag path pullDirectory unsecure forceNoVerification workingDirectory
 	# shellcheck disable=SC2034
-	local -r params=(
+	local -ar params=(
 		remote "$REMOTE_PATTERN" 'name of the remote repository'
 		tag '-t|--tag' 'git tag used to pull the file/directory'
 		path '-p|--path' 'path in remote repository which shall be pulled (file or directory)'
@@ -71,7 +72,7 @@ function gget-pull() {
 	# || true because --help returns 99 and we don't want to exit at this point (because we redirect output)
 	# shellcheck disable=SC2310
 	parseArguments params "$examples" "$@" >/dev/null || true
-	if ! [ -v workingDirectory ]; then workingDirectory="./.gget"; fi
+	if ! [ -v workingDirectory ]; then workingDirectory="$DEFAULT_WORKING_DIR"; fi
 
 	local -a args=()
 	if [ -v remote ] && [ -n "$remote" ]; then
@@ -90,17 +91,13 @@ function gget-pull() {
 	if ! [ -v unsecure ]; then unsecure="$forceNoVerification"; fi
 	checkAllArgumentsSet params "$examples"
 
-	if ! [ -d "$workingDirectory" ]; then
-		printf >&2 "\033[1;31mERROR\033[0m: working directory \033[0;36m%s\033[0m does not exist\n" "$workingDirectory"
-		echo >&2 "Check for typos and/or use $WORKING_DIR_PATTERN to specify another"
-		exit 9
-	fi
+	checkWorkingDirectoryExists "$workingDirectory"
 
 	# make directory paths absolute
 	local -r workingDirectory=$(readlink -m "$workingDirectory")
 	local -r pullDirectoryAbsolute=$(readlink -m "$pullDirectory")
 
-	declare remoteDirectory publicKeys repo gpgDir
+	local remoteDirectory publicKeys repo gpgDir pulledFiles
 	source "$scriptDir/directories.source.sh"
 
 	local doVerification
@@ -199,7 +196,7 @@ function gget-pull() {
 	eval "trap 'cleanupRepo \"$repo\"' EXIT"
 
 	local -i numberOfPulledFiles=0
-	local -r pulledFiles="$remoteDirectory/pulled"
+
 	if ! [ -f "$pulledFiles" ]; then
 		touch "$pulledFiles" || (printf >&2 "\033[1;31mERROR\033[0m: failed to create pulled at %s\n" "$pulledFiles" && exit 1)
 	fi
@@ -215,28 +212,21 @@ function gget-pull() {
 		sha=$(sha512sum "$repo/$file" | cut -d " " -f 1)
 		local -r entry="$tag	$file	$sha	$relativeTarget"
 
-		function grepByFile() {
-			grep -E "^[^\t]+	$file" "$@" "$pulledFiles"
-		}
 		#shellcheck disable=SC2310,SC2311
-		local -r currentEntry=$(grepByFile || true)
-		local currentVersion
-		currentVersion=$(echo "$currentEntry" | perl -0777 -pe 's/([^\t]+)\t.*/$1/')
+		local -r currentEntry=$(grepPulledEntryByFile "$pulledFiles" "$file" || true)
+		local entryTag entrySha
+		setEntryVariables "$currentEntry"
 
 		if [ "$currentEntry" == "" ]; then
 			echo "$entry" >>"$pulledFiles"
-		elif ! [ "$currentVersion" == "$tag" ]; then
-			printf "\033[0;36mINFO\033[0m: the file was pulled before in version %s, going to override with version %s \033[0;36m%s\033[0m\n" "$currentVersion" "$tag" "$pullDirectory/$file"
+		elif ! [ "$entryTag" == "$tag" ]; then
+			printf "\033[0;36mINFO\033[0m: the file was pulled before in version %s, going to override with version %s \033[0;36m%s\033[0m\n" "$entryTag" "$tag" "$pullDirectory/$file"
 			# we could warn about a version which was older
-			grepByFile -v >"$pulledFiles.new"
-			mv "$pulledFiles.new" "$pulledFiles"
-			echo "$entry" >>"$pulledFiles"
+			replacePulledEntry "$pulledFiles" "$file" "$entry"
 		else
-			local currentSha
-			currentSha=$(echo "$currentEntry" | perl -0777 -pe 's/[^\t]+\t[^\t]+\t([0-9a-f]+)\t.*/$1/')
-			if ! [ "$currentSha" == "$sha" ]; then
+			if ! [ "$entrySha" == "$sha" ]; then
 				printf "\033[1;33mWARNING\033[0m: looks like the sha512 of \033[0;36m%s\033[0m changed in tag %s\n" "$file" "$tag"
-				git --no-pager diff "$(echo "$currentSha" | git hash-object -w --stdin)" "$(echo "$sha" | git hash-object -w --stdin)" --word-diff=color --word-diff-regex . | grep -A 1 @@ | tail -n +2
+				git --no-pager diff "$(echo "$entrySha" | git hash-object -w --stdin)" "$(echo "$sha" | git hash-object -w --stdin)" --word-diff=color --word-diff-regex . | grep -A 1 @@ | tail -n +2
 				printf "Won't pull the file, remove the entry from %s if you want to pull it nonetheless\n" "$pulledFiles"
 				rm "$repo/$file"
 				return
@@ -267,7 +257,8 @@ function gget-pull() {
 			rm "$file.$SIG_EXTENSION"
 			moveFile "$file"
 		elif [ "$doVerification" == true ]; then
-			printf "\033[1;33mWARNING\033[0m: there was no corresponding *.%s file for %s, skipping it. " "$SIG_EXTENSION" "$file"
+			printf "\033[1;33mWARNING\033[0m: there was no corresponding *.%s file for %s, skipping it." "$SIG_EXTENSION" "$file"
+			mentionUnsecure
 			rm "$file"
 		else
 			moveFile "$file"
